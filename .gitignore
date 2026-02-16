@@ -10,7 +10,7 @@ wheels/
 .venv
 
 #test files
-test files/
+test_files/
 
 #MacOS
 .DS_Store
