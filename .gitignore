@@ -8,3 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+
+#test files
+test files/
+
+#MacOS
+.DS_Store
+
+# streamlit local config 
+.streamlit/
+
