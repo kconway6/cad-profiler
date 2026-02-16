@@ -3,117 +3,169 @@ import os
 
 st.set_page_config(page_title="CAD File Profiler", layout="centered")
 
-# Canonical extension per format (for aliases like .stp -> .step)
+# Canonical extension per format (true aliases only, e.g. .stp -> .step)
 EXTENSION_TO_FORMAT = {
     ".stp": ".step",
     ".igs": ".iges",
-    ".obj": ".obj",
 }
 
 FORMAT_KB = {
     ".step": {
         "label": "Neutral Solid (STEP)",
-        "geometry_type": "Solid",
-        "typical_sources": [
-            "Any major CAD system",
+        "geometry_class": "B-Rep",
+        "typical_authoring_tools": ["Any major CAD system"],
+        "common_use_cases": [
             "Supplier deliverables",
             "Design handoff",
+            "Quoting and tooling",
         ],
         "survives": ["Exact B-rep", "Assemblies", "Names/attributes"],
         "lost": ["Parametric history", "Sketch constraints"],
         "dfm_quote_confidence": "High",
+        "quote_risk_baseline": "Low",
         "automation_friendliness": "High",
-        "notes": "ISO 10303. Preferred for quoting and tooling.",
+        "notes": ["ISO 10303.", "Preferred for quoting and tooling."],
     },
     ".iges": {
         "label": "Neutral Surface/Solid (IGES)",
-        "geometry_type": "Surface / Solid",
-        "typical_sources": ["Legacy systems", "Aerospace supply chain", "2D/3D mix"],
+        "geometry_class": "Surface",
+        "typical_authoring_tools": [
+            "Legacy CAD systems",
+            "Aerospace supply chain tools",
+        ],
+        "common_use_cases": ["2D/3D mix", "Legacy exchange", "Surface-heavy data"],
         "survives": ["Surfaces and solids", "Basic topology"],
         "lost": ["Tight tolerances", "Parametric history", "Some assembly context"],
         "dfm_quote_confidence": "Medium",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "Medium",
-        "notes": "Older standard; STEP preferred when possible.",
+        "notes": ["Older standard; STEP preferred when possible."],
     },
     ".stl": {
         "label": "Mesh (STL)",
-        "geometry_type": "Mesh",
-        "typical_sources": ["3D printing", "Scan data", "Quick exports"],
+        "geometry_class": "Mesh",
+        "typical_authoring_tools": [
+            "Any CAD with STL export",
+            "Scan/reverse-engineering tools",
+        ],
+        "common_use_cases": ["3D printing", "Scan data", "Quick exports"],
         "survives": ["Triangulated surface", "Envelope shape"],
         "lost": ["Exact geometry", "Edges/faces", "Units sometimes ambiguous"],
-        "dfm_quote_confidence": "Low–Medium",
+        "dfm_quote_confidence": "Medium",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "Medium",
-        "notes": "Check units (mm vs in). Not suitable for precision machining quote alone.",
+        "notes": [
+            "Check units (mm vs in).",
+            "Not suitable for precision machining quote alone.",
+        ],
     },
     ".obj": {
         "label": "Mesh (OBJ)",
-        "geometry_type": "Mesh",
-        "typical_sources": ["Visualization", "Games", "Scan pipelines"],
+        "geometry_class": "Mesh",
+        "typical_authoring_tools": [
+            "Blender",
+            "Maya",
+            "Scan pipelines",
+            "Game engines",
+        ],
+        "common_use_cases": ["Visualization", "Games", "Appearance models"],
         "survives": ["Triangulated mesh", "UVs / materials"],
         "lost": ["Precise CAD geometry", "Units"],
         "dfm_quote_confidence": "Low",
+        "quote_risk_baseline": "High",
         "automation_friendliness": "Medium",
-        "notes": "Often used for appearance, not engineering.",
+        "notes": ["Often used for appearance, not engineering."],
     },
     ".sldprt": {
         "label": "SolidWorks Part",
-        "geometry_type": "Solid (native)",
-        "typical_sources": ["SolidWorks", "Supplier parts"],
+        "geometry_class": "Parametric",
+        "typical_authoring_tools": ["SolidWorks"],
+        "common_use_cases": ["Supplier parts", "Design in-house", "Detailing"],
         "survives": ["Full feature tree", "Parameters", "Materials"],
         "lost": ["Nothing when opened in SolidWorks"],
         "dfm_quote_confidence": "High",
-        "automation_friendliness": "High (with SolidWorks API)",
-        "notes": "Requires SolidWorks to open. Export STEP for neutral workflow.",
+        "quote_risk_baseline": "Low",
+        "automation_friendliness": "High",
+        "notes": [
+            "Requires SolidWorks to open.",
+            "Export STEP for neutral workflow.",
+        ],
     },
     ".sldasm": {
         "label": "SolidWorks Assembly",
-        "geometry_type": "Assembly (native)",
-        "typical_sources": ["SolidWorks assemblies"],
+        "geometry_class": "Parametric",
+        "typical_authoring_tools": ["SolidWorks"],
+        "common_use_cases": ["Assembly design", "BOM", "Large assemblies"],
         "survives": ["Structure", "mates", "parts"],
         "lost": ["Nothing when opened in SolidWorks"],
         "dfm_quote_confidence": "High",
-        "automation_friendliness": "High (with SolidWorks API)",
-        "notes": "Assembly context preserved. Export STEP for neutral.",
+        "quote_risk_baseline": "Low",
+        "automation_friendliness": "High",
+        "notes": ["Assembly context preserved.", "Export STEP for neutral."],
     },
     ".prt": {
         "label": "NX / Creo Native",
-        "geometry_type": "Solid (native)",
-        "typical_sources": ["Siemens NX", "PTC Creo"],
+        "geometry_class": "Parametric",
+        "typical_authoring_tools": ["Siemens NX", "PTC Creo"],
+        "common_use_cases": [
+            "Manufacturing CAD",
+            "High-end design",
+            "Enterprise parts",
+        ],
         "survives": ["Full model in native system"],
         "lost": ["Cross-platform; need same CAD to open"],
-        "dfm_quote_confidence": "High",
-        "automation_friendliness": "High (with native API)",
-        "notes": "Extension shared by NX and Creo; context-dependent.",
+        "dfm_quote_confidence": "Medium",
+        "quote_risk_baseline": "Medium",
+        "automation_friendliness": "High",
+        "notes": [
+            "Extension shared by NX and Creo; requires the correct native CAD to open reliably.",
+            "Export to STEP when the recipient's CAD system is unknown.",
+        ],
     },
     ".catpart": {
         "label": "CATIA Part",
-        "geometry_type": "Solid (native)",
-        "typical_sources": ["CATIA V5/V6", "Aerospace / automotive"],
+        "geometry_class": "Parametric",
+        "typical_authoring_tools": ["CATIA V5", "CATIA V6 (3DEXPERIENCE)"],
+        "common_use_cases": ["Aerospace", "Automotive", "Large assembly design"],
         "survives": ["Full part in CATIA"],
         "lost": ["Cross-platform"],
         "dfm_quote_confidence": "High",
+        "quote_risk_baseline": "Low",
         "automation_friendliness": "Medium",
-        "notes": "Native CATIA format. STEP for exchange.",
+        "notes": ["Native CATIA format.", "STEP for exchange."],
     },
     ".dwg": {
         "label": "AutoCAD Native (2D/3D)",
-        "geometry_type": "2D / 3D",
-        "typical_sources": ["AutoCAD", "Drafting", "Legacy drawings"],
+        "geometry_class": "2D Drawing",
+        "typical_authoring_tools": ["AutoCAD", "DraftSight", "BricsCAD"],
+        "common_use_cases": ["Drafting", "Legacy drawings", "2D documentation"],
         "survives": ["Drafting entities", "Blocks", "Layouts"],
         "lost": ["Parametric 3D in some workflows"],
-        "dfm_quote_confidence": "Medium (drawing-based)",
+        "dfm_quote_confidence": "Medium",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "High",
-        "notes": "Often used for 2D drawings; 3D possible.",
+        "notes": ["Often used for 2D drawings; 3D possible."],
     },
     ".dxf": {
         "label": "Drawing Exchange Format (2D)",
-        "geometry_type": "2D",
-        "typical_sources": ["AutoCAD", "CNC nesting", "Laser cutting"],
+        "geometry_class": "2D Drawing",
+        "typical_authoring_tools": [
+            "AutoCAD",
+            "CNC nesting software",
+            "Laser/plasma CAM",
+        ],
+        "common_use_cases": [
+            "CNC nesting",
+            "Laser cutting",
+            "2D CAM",
+            "Drawing exchange",
+        ],
         "survives": ["Lines, arcs", "Blocks", "Layers"],
         "lost": ["Proprietary objects", "Full fidelity"],
         "dfm_quote_confidence": "Medium",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "High",
-        "notes": "Good for 2D CAM and sheet cutting.",
+        "notes": ["Good for 2D CAM and sheet cutting."],
     },
 }
 
@@ -133,11 +185,15 @@ def render_summary_card(filename: str, extension: str, info: dict) -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**Geometry type**")
-        st.write(info["geometry_type"])
+        st.markdown("**Geometry class**")
+        st.write(info["geometry_class"])
 
-        st.markdown("**Typical sources**")
-        for item in info["typical_sources"]:
+        st.markdown("**Typical authoring tools**")
+        for item in info["typical_authoring_tools"]:
+            st.markdown(f"- {item}")
+
+        st.markdown("**Common use cases**")
+        for item in info["common_use_cases"]:
             st.markdown(f"- {item}")
 
         st.markdown("**Survives export**")
@@ -152,14 +208,15 @@ def render_summary_card(filename: str, extension: str, info: dict) -> None:
         st.markdown("**DFM / quote confidence**")
         st.write(info["dfm_quote_confidence"])
 
+        st.markdown("**Quote risk baseline**")
+        st.write(info["quote_risk_baseline"])
+
         st.markdown("**Automation friendliness**")
         st.write(info["automation_friendliness"])
 
         st.markdown("**Notes**")
-        for line in info["notes"].split(". "):
-            line = line.strip()
-            if line:
-                st.markdown(f"- {line}")
+        for item in info["notes"]:
+            st.markdown(f"- {item}")
 
 
 st.title("CAD File Profiler")
