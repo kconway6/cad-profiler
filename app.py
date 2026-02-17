@@ -459,11 +459,23 @@ def get_format_info(extension: str) -> dict | None:
 
 
 def render_summary_card(
-    filename: str, extension: str, info: dict, contextual_risk: str
+    info: dict,
+    *,
+    filename: str | None = None,
+    extension: str | None = None,
+    contextual_risk: str | None = None,
 ) -> None:
-    """Render a summary card with header, two columns, and bullet lists."""
+    """Render a summary card with header, two columns, and bullet lists.
+
+    When *filename* / *extension* are provided (Analyze page) the caption
+    shows them.  When *contextual_risk* is provided the adjusted-risk row
+    is included.
+    """
     st.subheader(info["label"])
-    st.caption(f"{filename}  ·  {extension}")
+    if filename and extension:
+        st.caption(f"{filename}  ·  {extension}")
+    elif extension:
+        st.caption(extension)
 
     col1, col2 = st.columns(2)
 
@@ -494,8 +506,9 @@ def render_summary_card(
         st.markdown("**Quote risk baseline**")
         st.write(info["quote_risk_baseline"])
 
-        st.markdown("**Quote risk (context-adjusted)**")
-        st.write(contextual_risk)
+        if contextual_risk is not None:
+            st.markdown("**Quote risk (context-adjusted)**")
+            st.write(contextual_risk)
 
         st.markdown("**Automation friendliness**")
         st.write(info["automation_friendliness"])
@@ -505,39 +518,163 @@ def render_summary_card(
             st.markdown(f"- {item}")
 
 
-st.title("CAD File Profiler")
-st.write("Upload a CAD file to analyze its format and metadata.")
+def build_triage_summary(
+    info: dict,
+    contextual_risk: str,
+    mesh_metrics: dict | None = None,
+    dxf_metrics: dict | None = None,
+) -> str:
+    """Return a max-2-sentence triage paragraph for Analyze mode."""
+    gc = info["geometry_class"]
+    baseline = info["quote_risk_baseline"]
 
-workflow = st.selectbox("Workflow Context", WORKFLOW_CONTEXTS)
+    # -- Sentence 1: risk assessment + any cleanup flags ---------------
+    if contextual_risk == baseline:
+        risk_part = f"{gc} geometry with {baseline.lower()} quote risk"
+    else:
+        risk_part = (
+            f"{gc} geometry with {baseline.lower()} baseline risk, "
+            f"adjusted to {contextual_risk.lower()} for the selected workflow"
+        )
 
-uploaded_file = st.file_uploader("Upload CAD file")
+    issues: list[str] = []
 
-if uploaded_file:
-    filename = uploaded_file.name
-    extension = os.path.splitext(filename)[1].lower()
-    info = get_format_info(extension)
+    if mesh_metrics is not None:
+        if not mesh_metrics.get("is_watertight", True):
+            issues.append("mesh is not watertight")
+        cc = mesh_metrics.get("component_count")
+        if cc is not None and cc > 1:
+            issues.append(f"{cc} disconnected components detected")
+
+    if dxf_metrics is not None:
+        if dxf_metrics.get("counts_by_type", {}).get("SPLINE", 0) > 0:
+            issues.append("splines present that may need conversion for CAM")
+
+    sentence1 = f"{risk_part}."
+    if issues:
+        sentence1 = f"{risk_part} — {'; '.join(issues)}."
+
+    # -- Sentence 2: next ask ------------------------------------------
+    if gc == "Mesh":
+        next_ask = (
+            "Confirm units (mm vs in) and request a STEP or native CAD file "
+            "if available."
+        )
+    elif gc == "2D Drawing":
+        next_ask = (
+            "Confirm dimensions, tolerances, and material thickness are "
+            "specified in the drawing."
+        )
+    else:
+        next_ask = "Confirm tolerances and surface finish requirements."
+
+    return f"{sentence1} {next_ask}"
+
+
+# Build the Learn-page dropdown options: canonical extensions + aliases.
+def _build_learn_options() -> list[str]:
+    options: list[str] = list(FORMAT_KB.keys())
+    for alias, canonical in sorted(EXTENSION_TO_FORMAT.items()):
+        options.append(f"{alias}  (→ {canonical})")
+    return options
+
+
+LEARN_OPTIONS = _build_learn_options()
+
+# ---------------------------------------------------------------------------
+# Sidebar navigation
+# ---------------------------------------------------------------------------
+st.sidebar.title("CAD File Profiler")
+page = st.sidebar.radio("Navigate", ["Analyze", "Learn"])
+
+# ---------------------------------------------------------------------------
+# Analyze page
+# ---------------------------------------------------------------------------
+if page == "Analyze":
+    st.title("Analyze a CAD file")
+    st.write("Upload a CAD file to analyze its format and metadata.")
+
+    workflow = st.selectbox("Workflow Context", WORKFLOW_CONTEXTS)
+
+    uploaded_file = st.file_uploader("Upload CAD file")
+
+    if uploaded_file:
+        filename = uploaded_file.name
+        extension = os.path.splitext(filename)[1].lower()
+        info = get_format_info(extension)
+
+        if info:
+            contextual_risk = compute_contextual_risk(
+                extension, info["geometry_class"], workflow
+            )
+            render_summary_card(
+                info,
+                filename=filename,
+                extension=extension,
+                contextual_risk=contextual_risk,
+            )
+
+            # Parse metrics first (needed by triage) but render after.
+            mesh_metrics: dict | None = None
+            dxf_metrics: dict | None = None
+            mesh_error: str | None = None
+            dxf_error: str | None = None
+
+            if extension in MESH_EXTENSIONS:
+                file_bytes = uploaded_file.getvalue()
+                result = parse_mesh_metrics(file_bytes, extension)
+                if isinstance(result, dict):
+                    mesh_metrics = result
+                else:
+                    mesh_error = result
+            elif extension == ".dxf":
+                file_bytes = uploaded_file.getvalue()
+                result = parse_dxf_metrics(file_bytes)
+                if isinstance(result, dict):
+                    dxf_metrics = result
+                else:
+                    dxf_error = result
+
+            # Triage summary — immediately below the summary card.
+            triage_text = build_triage_summary(
+                info, contextual_risk, mesh_metrics, dxf_metrics
+            )
+            st.markdown("---")
+            st.markdown(f"**Triage summary:** {triage_text}")
+            st.text_area(
+                "Copy/paste triage summary",
+                value=triage_text,
+                height=80,
+                disabled=True,
+            )
+
+            # Extracted metrics — below the triage.
+            if mesh_metrics is not None:
+                render_mesh_metrics(mesh_metrics)
+            elif mesh_error is not None:
+                st.warning(mesh_error)
+
+            if dxf_metrics is not None:
+                render_dxf_metrics(dxf_metrics)
+            elif dxf_error is not None:
+                st.warning(dxf_error)
+        else:
+            st.subheader("Unknown format")
+            st.caption(f"{filename}  ·  {extension}")
+            st.info("No format profile in knowledge base for this extension.")
+
+# ---------------------------------------------------------------------------
+# Learn page
+# ---------------------------------------------------------------------------
+elif page == "Learn":
+    st.title("Format knowledge base")
+    st.write("Browse supported CAD format profiles without uploading a file.")
+
+    selected = st.selectbox("Select an extension", LEARN_OPTIONS)
+
+    # Resolve alias labels like ".stp  (→ .step)" back to the raw extension.
+    ext = selected.split("(")[0].strip() if "(" in selected else selected
+    info = get_format_info(ext)
 
     if info:
-        contextual_risk = compute_contextual_risk(
-            extension, info["geometry_class"], workflow
-        )
-        render_summary_card(filename, extension, info, contextual_risk)
-
-        if extension in MESH_EXTENSIONS:
-            file_bytes = uploaded_file.getvalue()
-            result = parse_mesh_metrics(file_bytes, extension)
-            if isinstance(result, dict):
-                render_mesh_metrics(result)
-            else:
-                st.warning(result)
-        elif extension == ".dxf":
-            file_bytes = uploaded_file.getvalue()
-            result = parse_dxf_metrics(file_bytes)
-            if isinstance(result, dict):
-                render_dxf_metrics(result)
-            else:
-                st.warning(result)
-    else:
-        st.subheader("Unknown format")
-        st.caption(f"{filename}  ·  {extension}")
-        st.info("No format profile in knowledge base for this extension.")
+        render_summary_card(info, extension=ext)
