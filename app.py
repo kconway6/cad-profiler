@@ -60,7 +60,11 @@ FORMAT_KB = {
             "Any CAD with STL export",
             "Scan/reverse-engineering tools",
         ],
-        "common_use_cases": ["3D printing", "Scan data", "Quick exports"],
+        "common_use_cases": [
+            "Scan data",
+            "Quick visualization exports",
+            "Reverse-engineered geometry",
+        ],
         "survives": ["Triangulated surface", "Envelope shape"],
         "lost": ["Exact geometry", "Edges/faces", "Units sometimes ambiguous"],
         "dfm_quote_confidence": "Low",
@@ -68,7 +72,7 @@ FORMAT_KB = {
         "automation_friendliness": "Medium",
         "notes": [
             "Check units (mm vs in).",
-            "Not suitable for precision machining quote alone.",
+            "Not suitable for CNC machining quote alone.",
             "Lacks exact B-rep geometry; reverse engineering may be needed.",
         ],
     },
@@ -101,7 +105,7 @@ FORMAT_KB = {
         "automation_friendliness": "High",
         "notes": [
             "Risk depends on access to SolidWorks; file cannot be opened without it.",
-            "Export to STEP is recommended for neutral workflows.",
+            "Export to STEP is recommended for CNC quoting workflows.",
         ],
     },
     ".sldasm": {
@@ -116,7 +120,7 @@ FORMAT_KB = {
         "automation_friendliness": "High",
         "notes": [
             "Risk depends on access to SolidWorks; file cannot be opened without it.",
-            "Export to STEP is recommended for neutral workflows.",
+            "Export to STEP is recommended for CNC quoting workflows.",
         ],
     },
     ".prt": {
@@ -150,7 +154,7 @@ FORMAT_KB = {
         "automation_friendliness": "Medium",
         "notes": [
             "Risk depends on access to CATIA; file cannot be opened without it.",
-            "Export to STEP is recommended for neutral workflows.",
+            "Export to STEP is recommended for CNC quoting workflows.",
         ],
     },
     ".dwg": {
@@ -171,11 +175,11 @@ FORMAT_KB = {
         "typical_authoring_tools": [
             "AutoCAD",
             "CNC nesting software",
-            "Laser/plasma CAM",
+            "CAM software",
         ],
         "common_use_cases": [
-            "CNC nesting",
-            "Laser cutting",
+            "CNC profile layouts",
+            "Fixture and jig drawings",
             "2D CAM",
             "Drawing exchange",
         ],
@@ -184,16 +188,9 @@ FORMAT_KB = {
         "dfm_quote_confidence": "Medium",
         "quote_risk_baseline": "Medium",
         "automation_friendliness": "High",
-        "notes": ["Good for 2D CAM and sheet cutting."],
+        "notes": ["Good for 2D CAM and CNC profile work."],
     },
 }
-
-
-WORKFLOW_CONTEXTS = [
-    "Precision Machining",
-    "Additive Manufacturing",
-    "Sheet Metal / 2D CAM",
-]
 
 
 def compute_contextual_risk(risk_score: int) -> str:
@@ -497,7 +494,7 @@ def build_triage_summary(
     else:
         risk_part = (
             f"{gc} geometry with {baseline.lower()} baseline risk, "
-            f"adjusted to {contextual_risk.lower()} for the selected workflow"
+            f"adjusted to {contextual_risk.lower()} for CNC machining intake"
         )
 
     issues: list[str] = []
@@ -538,29 +535,13 @@ def build_triage_summary(
 # Dual-axis scoring (0–100)
 # ---------------------------------------------------------------------------
 
-# (workflow, geometry_class) → (risk_baseline, confidence_baseline)
-SCORE_BASELINES: dict[str, dict[str, tuple[int, int]]] = {
-    "Precision Machining": {
-        "B-Rep": (15, 85),
-        "Surface": (40, 55),
-        "Mesh": (75, 25),
-        "Parametric": (20, 80),
-        "2D Drawing": (45, 50),
-    },
-    "Additive Manufacturing": {
-        "B-Rep": (30, 70),
-        "Surface": (40, 55),
-        "Mesh": (15, 80),
-        "Parametric": (35, 65),
-        "2D Drawing": (80, 20),
-    },
-    "Sheet Metal / 2D CAM": {
-        "B-Rep": (30, 65),
-        "Surface": (45, 50),
-        "Mesh": (75, 20),
-        "Parametric": (35, 60),
-        "2D Drawing": (15, 80),
-    },
+# geometry_class → (risk_baseline, confidence_baseline) for CNC machining
+SCORE_BASELINES: dict[str, tuple[int, int]] = {
+    "B-Rep": (15, 85),
+    "Surface": (40, 55),
+    "Mesh": (75, 25),
+    "Parametric": (20, 80),
+    "2D Drawing": (45, 50),
 }
 
 RISK_BANDS: list[tuple[int, str, str]] = [
@@ -591,15 +572,14 @@ def score_to_band(score: int, kind: str) -> tuple[str, str]:
 
 def compute_scores(
     info: dict,
-    workflow: str,
     mesh_metrics: dict | None = None,
     dxf_metrics: dict | None = None,
 ) -> tuple[int, int, list[str]]:
     """Return (risk_score, confidence_score, explanations)."""
     gc = info["geometry_class"]
-    risk, confidence = SCORE_BASELINES.get(workflow, {}).get(gc, (50, 50))
+    risk, confidence = SCORE_BASELINES.get(gc, (50, 50))
     explanations: list[str] = [
-        f"Baseline for {gc} in {workflow}: risk {risk}, confidence {confidence}"
+        f"Baseline for {gc}: risk {risk}, confidence {confidence}"
     ]
 
     if mesh_metrics is not None:
@@ -704,10 +684,10 @@ page = st.sidebar.radio("Navigate", ["Analyze", "Learn"])
 # Analyze page
 # ---------------------------------------------------------------------------
 if page == "Analyze":
-    st.title("Analyze a CAD file")
-    st.write("Upload a CAD file to analyze its format and metadata.")
-
-    workflow = st.selectbox("Workflow Context", WORKFLOW_CONTEXTS)
+    st.title("CNC Machining Intake")
+    st.write(
+        "Upload a CAD file to assess format quality and quote risk for CNC machining."
+    )
 
     uploaded_file = st.file_uploader("Upload CAD file")
 
@@ -739,7 +719,7 @@ if page == "Analyze":
                     dxf_error = result
 
             risk_score, confidence_score, explanations = compute_scores(
-                info, workflow, mesh_metrics, dxf_metrics
+                info, mesh_metrics, dxf_metrics
             )
             contextual_risk = compute_contextual_risk(risk_score)
 
@@ -784,7 +764,7 @@ if page == "Analyze":
 # ---------------------------------------------------------------------------
 elif page == "Learn":
     st.title("Format knowledge base")
-    st.write("Browse supported CAD format profiles without uploading a file.")
+    st.write("Browse supported CAD format profiles for CNC machining intake.")
 
     selected = st.selectbox("Select an extension", LEARN_OPTIONS)
 
