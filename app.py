@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import os
 
+import ezdxf
+from ezdxf import bbox as ezdxf_bbox
 import numpy as np
 import streamlit as st
 import trimesh
@@ -327,6 +329,128 @@ def render_mesh_metrics(metrics: dict) -> None:
     )
 
 
+DXF_TRACKED_TYPES = [
+    "LINE",
+    "ARC",
+    "CIRCLE",
+    "LWPOLYLINE",
+    "POLYLINE",
+    "SPLINE",
+    "TEXT",
+    "MTEXT",
+]
+
+
+def parse_dxf_metrics(file_bytes: bytes) -> dict | str:
+    """Parse a DXF from in-memory bytes and return entity metrics.
+
+    Returns a dict of metrics on success, or an error-message string on failure.
+    """
+    try:
+        try:
+            text = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("latin-1")
+        doc = ezdxf.read(io.StringIO(text))
+        msp = doc.modelspace()
+
+        counts_by_type: dict[str, int] = {}
+        layers: set[str] = set()
+        total = 0
+
+        for entity in msp:
+            total += 1
+            dtype = entity.dxftype()
+            if dtype in DXF_TRACKED_TYPES:
+                counts_by_type[dtype] = counts_by_type.get(dtype, 0) + 1
+            layers.add(entity.dxf.layer)
+
+        extents: dict | None = None
+        cache = ezdxf_bbox.Cache()
+        bounding_box = ezdxf_bbox.extents(msp, cache=cache)
+        if bounding_box.has_data:
+            ext_min = bounding_box.extmin
+            ext_max = bounding_box.extmax
+            ext_size = ext_max - ext_min
+            extents = {
+                "min": [round(ext_min.x, 4), round(ext_min.y, 4), round(ext_min.z, 4)],
+                "max": [round(ext_max.x, 4), round(ext_max.y, 4), round(ext_max.z, 4)],
+                "size": [
+                    round(ext_size.x, 4),
+                    round(ext_size.y, 4),
+                    round(ext_size.z, 4),
+                ],
+            }
+
+        return {
+            "total_entities": total,
+            "counts_by_type": {
+                t: counts_by_type[t] for t in DXF_TRACKED_TYPES if t in counts_by_type
+            },
+            "layer_count": len(layers),
+            "extents": extents,
+        }
+    except Exception as exc:
+        return f"DXF parsing failed: {exc}"
+
+
+def render_dxf_metrics(metrics: dict) -> None:
+    """Display extracted DXF entity metrics in a dedicated section."""
+    st.markdown("---")
+    st.subheader("Extracted metrics")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Total entities**")
+        st.write(f"{metrics['total_entities']:,}")
+
+        st.markdown("**Layers referenced**")
+        st.write(str(metrics["layer_count"]))
+
+        extents = metrics.get("extents")
+        if extents:
+            sx, sy, sz = extents["size"]
+            has_z = sz != 0.0
+
+            if has_z:
+                st.markdown("**Approx extents (X × Y × Z)**")
+                st.write(f"{sx}  ×  {sy}  ×  {sz}")
+            else:
+                st.markdown("**Approx extents (X × Y)**")
+                st.write(f"{sx}  ×  {sy}")
+
+            st.markdown("**Extents min**")
+            if has_z:
+                st.write(
+                    f"({extents['min'][0]}, {extents['min'][1]}, {extents['min'][2]})"
+                )
+            else:
+                st.write(f"({extents['min'][0]}, {extents['min'][1]})")
+
+            st.markdown("**Extents max**")
+            if has_z:
+                st.write(
+                    f"({extents['max'][0]}, {extents['max'][1]}, {extents['max'][2]})"
+                )
+            else:
+                st.write(f"({extents['max'][0]}, {extents['max'][1]})")
+
+    with col2:
+        st.markdown("**Entity counts by type**")
+        counts = metrics["counts_by_type"]
+        if counts:
+            for dtype, count in counts.items():
+                st.markdown(f"- {dtype}: {count:,}")
+        else:
+            st.write("No tracked entity types found.")
+
+    if counts.get("SPLINE", 0) > 0:
+        st.warning(
+            "Splines detected — may require conversion to arcs/polylines for CAM."
+        )
+
+
 def get_format_info(extension: str) -> dict | None:
     """Resolve extension (including aliases) to FORMAT_KB entry."""
     ext = extension.lower()
@@ -404,6 +528,13 @@ if uploaded_file:
             result = parse_mesh_metrics(file_bytes, extension)
             if isinstance(result, dict):
                 render_mesh_metrics(result)
+            else:
+                st.warning(result)
+        elif extension == ".dxf":
+            file_bytes = uploaded_file.getvalue()
+            result = parse_dxf_metrics(file_bytes)
+            if isinstance(result, dict):
+                render_dxf_metrics(result)
             else:
                 st.warning(result)
     else:
