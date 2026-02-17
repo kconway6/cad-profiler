@@ -203,6 +203,165 @@ FORMAT_KB = {
     },
 }
 
+# Plain-English "What this file is" for Learn — Formats field guide (2–4 sentences).
+FORMAT_WHAT_THIS_IS: dict[str, str] = {
+    ".step": (
+        "STEP is an ISO standard exchange format for 3D product data. "
+        "It carries exact boundary-representation (B-rep) geometry: surfaces, "
+        "edges, and topology that CAM and inspection software can use directly. "
+        "For CNC quoting it is the preferred neutral format because it preserves "
+        "design intent without requiring the original CAD system."
+    ),
+    ".iges": (
+        "IGES is an older neutral format that can represent both surfaces and "
+        "solids. Many legacy and aerospace systems still export it. "
+        "Quality varies: surface-only exports are common, and geometry may need "
+        "healing before machining. STEP is preferred when the sender can provide it."
+    ),
+    ".stl": (
+        "STL is a mesh format: the model is stored as a cloud of triangles with "
+        "no exact curves or edges. It is widely used for 3D printing and quick "
+        "exports. For CNC machining it is problematic because units are often "
+        "ambiguous (mm vs in) and the triangulated surface is not suitable for "
+        "precision toolpaths without conversion or reverse engineering."
+    ),
+    ".obj": (
+        "OBJ is a mesh format common in animation and visualization (Blender, "
+        "Maya, game engines). It can carry UVs and materials but rarely carries "
+        "engineering units or precise CAD geometry. For CNC intake it shares "
+        "the same drawbacks as STL: no B-rep, unclear units, and limited use "
+        "for direct machining."
+    ),
+    ".sldprt": (
+        "A SolidWorks part file contains the full parametric model: features, "
+        "sketches, and history. It can only be opened in SolidWorks. "
+        "For CNC quoting the risk is access: if the recipient does not have "
+        "SolidWorks, they cannot inspect or re-export the geometry. Exporting to "
+        "STEP is the standard workaround for neutral handoff."
+    ),
+    ".sldasm": (
+        "A SolidWorks assembly file references multiple parts and stores mates "
+        "and assembly structure. Like .sldprt it is native to SolidWorks only. "
+        "For intake the same rule applies: without SolidWorks the file cannot "
+        "be opened. Request a STEP export (or individual STEP parts) for "
+        "quoting and CAM."
+    ),
+    ".prt": (
+        "The .prt extension is shared by Siemens NX and PTC Creo. The file "
+        "contains a full native part model but is tied to the originating "
+        "system. Opening it requires the correct CAD license (NX or Creo). "
+        "For cross‑platform quoting, STEP is the safe choice."
+    ),
+    ".catpart": (
+        "A CATIA part file holds the complete part model in CATIA V5 or V6 "
+        "format. It can only be opened in CATIA. Common in aerospace and "
+        "automotive; for CNC quoting, suppliers without CATIA need a STEP "
+        "export to evaluate and program the part."
+    ),
+    ".dwg": (
+        "DWG is AutoCAD’s native format for 2D and 3D drawing data. It carries "
+        "drafting entities, blocks, and layouts and is widely used for "
+        "drawings and documentation. For CNC, 2D DWGs are often used for "
+        "profile or fixture work; 3D is possible but less common in "
+        "machining workflows."
+    ),
+    ".dxf": (
+        "DXF is a 2D (and limited 3D) exchange format built around lines, "
+        "arcs, circles, and polylines. It is the usual output for CNC nesting "
+        "and 2D CAM. Quality depends on how it was exported: splines and "
+        "complex entities may require conversion to arcs or polylines before "
+        "toolpath generation."
+    ),
+}
+
+# Optional parentheticals for survives/lost bullets on Learn — Formats (canonical ext → survives|lost → item → note).
+FORMAT_BULLET_NOTES: dict[str, dict[str, dict[str, str]]] = {
+    ".step": {
+        "survives": {
+            "Exact B-rep": "precise surfaces and topology",
+            "Assemblies": "structure and placement",
+            "Names/attributes": "PMI and metadata where present",
+        },
+        "lost": {"Parametric history": "feature tree and sketch constraints"},
+    },
+    ".iges": {
+        "survives": {
+            "Surfaces and solids": "depending on export",
+            "Basic topology": "may need healing",
+        },
+        "lost": {
+            "Tight tolerances": "often approximated",
+            "Parametric history": "not in IGES",
+            "Some assembly context": "structure can be flattened",
+        },
+    },
+    ".stl": {
+        "survives": {
+            "Triangulated surface": "triangle mesh only",
+            "Envelope shape": "outer shell",
+        },
+        "lost": {
+            "Exact geometry": "no curves or edges",
+            "Edges/faces": "replaced by facets",
+            "Units sometimes ambiguous": "mm vs in not encoded",
+        },
+    },
+    ".obj": {
+        "survives": {
+            "Triangulated mesh": "vertices and faces",
+            "UVs / materials": "for visualization",
+        },
+        "lost": {"Precise CAD geometry": "no B-rep", "Units": "not standardized"},
+    },
+    ".sldprt": {
+        "survives": {
+            "Full feature tree": "in SolidWorks only",
+            "Parameters": "dimensions and relations",
+            "Materials": "in the model",
+        },
+        "lost": {"Nothing when opened in SolidWorks": "full fidelity in‑house only"},
+    },
+    ".sldasm": {
+        "survives": {
+            "Structure": "assembly tree",
+            "mates": "constraints",
+            "parts": "references to .sldprt",
+        },
+        "lost": {
+            "Nothing when opened in SolidWorks": "cross‑platform requires STEP export"
+        },
+    },
+    ".prt": {
+        "survives": {"Full model in native system": "in NX or Creo only"},
+        "lost": {"Cross-platform; need same CAD to open": "STEP for handoff"},
+    },
+    ".catpart": {
+        "survives": {"Full part in CATIA": "in CATIA only"},
+        "lost": {"Cross-platform": "STEP for non‑CATIA shops"},
+    },
+    ".dwg": {
+        "survives": {
+            "Drafting entities": "lines, arcs, text, dimensions",
+            "Blocks": "reusable symbols",
+            "Layouts": "paper space",
+        },
+        "lost": {
+            "Parametric 3D in some workflows": "3D can be present but not always portable"
+        },
+    },
+    ".dxf": {
+        "survives": {
+            "Lines, arcs": "and circles, polylines",
+            "Blocks": "block definitions",
+            "Layers": "layer names and visibility",
+        },
+        "lost": {
+            "Proprietary objects": "custom entities may not translate",
+            "Full fidelity": "export options affect what is written",
+        },
+    },
+}
+
 
 MATERIALS = [
     "Aluminum — 6061-T6 (default)",
@@ -692,6 +851,65 @@ def get_format_info(extension: str) -> dict | None:
     return FORMAT_KB.get(canonical)
 
 
+def _quoting_reality_paragraph(info: dict) -> str:
+    """Turn dfm_quote_confidence, quote_risk_baseline, automation_friendliness into a short narrative."""
+    conf = info["dfm_quote_confidence"]
+    risk = info["quote_risk_baseline"]
+    auto = info["automation_friendliness"]
+    parts: list[str] = []
+    if conf == "High":
+        parts.append(
+            "Quote confidence is high: the format usually carries enough information to estimate and program without guesswork."
+        )
+    elif conf == "Medium":
+        parts.append(
+            "Quote confidence is medium: you can often quote from the file, but missing details (units, tolerances, condition) may require a round of clarification."
+        )
+    else:
+        parts.append(
+            "Quote confidence is low: the file alone is rarely enough to quote accurately; expect to ask for units, native or STEP geometry, or additional specs."
+        )
+    if risk == "High":
+        parts.append(
+            "Baseline quote risk is high—rework, miscommunication, or conversion failures are more likely."
+        )
+    elif risk == "Medium":
+        parts.append(
+            "Baseline quote risk is medium; access to the right tools or a neutral export reduces risk."
+        )
+    else:
+        parts.append("Baseline quote risk is low for CNC intake.")
+    if auto == "High":
+        parts.append(
+            "Automation friendliness is high: the format is well suited to scripted checks and toolpath generation."
+        )
+    elif auto == "Medium":
+        parts.append(
+            "Automation is possible but may require format-specific handling or cleanup."
+        )
+    else:
+        parts.append(
+            "Automation is limited; manual review or conversion is often needed."
+        )
+    return " ".join(parts)
+
+
+def _next_ask_reference(gc: str) -> tuple[str, str]:
+    """Return (standard next-ask sentence, optional line for unknown material)."""
+    unknown_line = "If material is unknown, also confirm material, heat treat condition, and any coatings/special processes."
+    if gc == "Mesh":
+        return (
+            "Confirm units (mm vs in) and request a STEP or native CAD file if available.",
+            unknown_line,
+        )
+    if gc == "2D Drawing":
+        return (
+            "Confirm dimensions, tolerances, and material thickness are specified in the drawing.",
+            unknown_line,
+        )
+    return "Confirm tolerances and surface finish requirements.", unknown_line
+
+
 def render_summary_card(
     info: dict,
     *,
@@ -753,6 +971,140 @@ def render_summary_card(
         st.markdown("**Notes**")
         for item in info["notes"]:
             st.markdown(f"- {item}")
+
+
+def render_format_field_guide(info: dict, canonical_ext: str) -> None:
+    """Render the Learn — Formats field guide: What this file is, Where it comes from, Keep vs lose, Quoting reality, Scoring, What to ask next."""
+    gc = info["geometry_class"]
+    bullet_notes = FORMAT_BULLET_NOTES.get(canonical_ext, {})
+
+    # What this file is
+    what = FORMAT_WHAT_THIS_IS.get(canonical_ext, "")
+    if what:
+        st.subheader("What this file is")
+        st.write(what)
+
+    # Where it comes from
+    st.subheader("Where it comes from")
+    st.caption("Typical authoring tools and common use cases.")
+    col_where1, col_where2 = st.columns(2)
+    with col_where1:
+        st.markdown("**Typical authoring tools**")
+        for item in info["typical_authoring_tools"]:
+            st.markdown(f"- {item}")
+    with col_where2:
+        st.markdown("**Common use cases**")
+        for item in info["common_use_cases"]:
+            st.markdown(f"- {item}")
+
+    # What you keep vs what you lose
+    st.subheader("What you keep vs what you lose")
+    col_keep, col_lose = st.columns(2)
+    with col_keep:
+        st.markdown("**Survives**")
+        for item in info["survives"]:
+            note = bullet_notes.get("survives", {}).get(item)
+            st.markdown(f"- {item}" + (f" ({note})" if note else ""))
+    with col_lose:
+        st.markdown("**Lost or at risk**")
+        for item in info["lost"]:
+            note = bullet_notes.get("lost", {}).get(item)
+            st.markdown(f"- {item}" + (f" ({note})" if note else ""))
+
+    # Quoting reality
+    st.subheader("Quoting reality")
+    st.write(_quoting_reality_paragraph(info))
+
+    # Typical manufacturing workflow
+    _WORKFLOW_FLOWS: dict[str, tuple[str, str | None]] = {
+        ".step": ("STEP → CAM → machining", None),
+        ".iges": (
+            "IGES → stitch/repair → solidify → CAM → machining",
+            "Common failure: surface gaps that prevent solid creation; healing may take multiple rounds.",
+        ),
+        ".stl": (
+            "STL → remodel or surface fit → CAM → machining",
+            "Common failure: ambiguous units (mm vs in) and faceted surfaces too coarse for precision toolpaths.",
+        ),
+        ".obj": (
+            "OBJ → remodel or surface fit → CAM → machining",
+            "Common failure: no engineering units; visualization-quality mesh rarely meets CNC tolerance needs.",
+        ),
+        ".sldprt": (
+            "SLDPRT → export to STEP → CAM → machining",
+            "Common failure: recipient lacks SolidWorks; file cannot be opened or re-exported.",
+        ),
+        ".sldasm": (
+            "SLDASM → export to STEP (per-part) → CAM → machining",
+            "Common failure: missing referenced parts or broken assembly mates after export.",
+        ),
+        ".prt": (
+            "PRT → export to STEP → CAM → machining",
+            "Common failure: wrong CAD system (NX vs Creo); file may not open at all.",
+        ),
+        ".catpart": (
+            "CATPART → export to STEP → CAM → machining",
+            "Common failure: no CATIA license; part is inaccessible without it.",
+        ),
+        ".dwg": (
+            "DWG → extract 2D profiles → verify dims/tolerances → 2.5D CAM → machining",
+            "Common failure: 3D data mixed with 2D layouts; unclear which entities define the part.",
+        ),
+        ".dxf": (
+            "DXF → verify units + thickness + tolerances → 2.5D CAM/profile → machining",
+            "Common failure: splines that CAM cannot process; entity cleanup required.",
+        ),
+    }
+    _flow = _WORKFLOW_FLOWS.get(canonical_ext)
+    if _flow:
+        st.subheader("Typical manufacturing workflow")
+        st.markdown(f"**{_flow[0]}**")
+        if _flow[1]:
+            st.caption(_flow[1])
+
+    # How scoring works here
+    st.subheader("How scoring works here")
+    risk_base, conf_base = SCORE_BASELINES.get(gc, (50, 50))
+    st.markdown(
+        f"**Baseline (this geometry class):** risk {risk_base}, confidence {conf_base}."
+    )
+    if canonical_ext in MESH_EXTENSIONS:
+        st.caption(
+            "Metric-based adjustments that can apply when a mesh file is analyzed:"
+        )
+        st.markdown(
+            "- **Non-watertight mesh:** risk +10, confidence −10 — gaps or holes in the surface."
+        )
+        st.markdown(
+            "- **Multiple disconnected components:** risk +8 — more than one body in the file."
+        )
+        st.markdown(
+            "- **High triangle count (>500k):** risk +5 — heavy meshes are harder to process and may indicate poor export."
+        )
+        st.markdown(
+            "- **Very high triangle count (>2M):** risk +10 — component count is skipped for performance; risk still increases."
+        )
+    elif canonical_ext == ".dxf":
+        st.caption("Metric-based adjustments that can apply when a DXF is analyzed:")
+        st.markdown(
+            "- **Splines present:** risk +10, confidence −5 — may need conversion to arcs/polylines for CAM."
+        )
+        st.markdown(
+            "- **Very large extents (max dimension >10,000):** risk +5 — verify units (e.g. mm vs tenths)."
+        )
+        st.markdown(
+            "- **Very small extents (0 < max dimension < 1):** risk +5 — verify units (e.g. in vs mm)."
+        )
+    else:
+        st.caption(
+            "No file-level metrics are extracted for this format; scoring uses the baseline only."
+        )
+
+    # What to ask next
+    st.subheader("What to ask next")
+    next_ask, unknown_line = _next_ask_reference(gc)
+    st.write(next_ask)
+    st.caption(unknown_line)
 
 
 def build_triage_summary(
@@ -980,6 +1332,52 @@ def _build_learn_options() -> list[str]:
 
 LEARN_OPTIONS = _build_learn_options()
 
+
+def _cnc_suitability_line(gc: str, conf: str) -> str:
+    """One-line CNC suitability summary derived from geometry class and DFM confidence."""
+    if gc == "B-Rep" and conf == "High":
+        return "Ideal for CNC — exact geometry, reliable quoting"
+    if gc == "B-Rep":
+        return "Good for CNC — exact geometry, verify completeness"
+    if gc == "Surface" and conf in ("High", "Medium"):
+        return "Usable for CNC — may need healing; STEP preferred"
+    if gc == "Surface":
+        return "Risky for CNC — surface gaps common; healing required"
+    if gc == "Mesh":
+        return "Poor for CNC — no exact geometry; reverse engineering likely needed"
+    if gc == "Parametric" and conf == "High":
+        return "Excellent in-house — requires native CAD; export to STEP for handoff"
+    if gc == "Parametric":
+        return "Good if accessible — requires native CAD license to open"
+    if gc == "2D Drawing" and conf in ("High", "Medium"):
+        return "Good for 2D CNC / profiles — confirm dims and tolerances"
+    return "Usable for 2D work — verify completeness"
+
+
+def _build_comparison_rows() -> list[dict]:
+    """Build comparison table rows for all canonical formats, sorted by baseline risk."""
+    rows: list[dict] = []
+    for ext, info in FORMAT_KB.items():
+        gc = info["geometry_class"]
+        risk_base, conf_base = SCORE_BASELINES.get(gc, (50, 50))
+        risk_label, _ = score_to_band(risk_base, "risk")
+        conf_label, _ = score_to_band(conf_base, "confidence")
+        rows.append(
+            {
+                "ext": ext,
+                "gc": gc,
+                "risk_base": risk_base,
+                "risk_label": risk_label,
+                "conf_base": conf_base,
+                "conf_label": conf_label,
+                "auto": info["automation_friendliness"],
+                "suitability": _cnc_suitability_line(gc, info["dfm_quote_confidence"]),
+            }
+        )
+    rows.sort(key=lambda r: r["risk_base"])
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Sidebar navigation
 # ---------------------------------------------------------------------------
@@ -1079,14 +1477,44 @@ elif page == "Learn — Formats":
     st.title("Format knowledge base")
     st.write("Browse supported CAD format profiles for CNC machining intake.")
 
+    # ------------------------------------------------------------------
+    # Format comparison table
+    # ------------------------------------------------------------------
+    st.subheader("Format comparison (CNC machining)")
+    st.caption("All canonical formats, sorted from lowest to highest baseline risk.")
+
+    _comp_rows = _build_comparison_rows()
+
+    _header = (
+        "| Extension | Geometry | Risk | Confidence | Automation | CNC suitability |\n"
+        "|-----------|----------|------|------------|------------|----------------|\n"
+    )
+    _body = ""
+    for _r in _comp_rows:
+        _body += (
+            f"| `{_r['ext']}` "
+            f"| {_r['gc']} "
+            f"| {_r['risk_base']} ({_r['risk_label']}) "
+            f"| {_r['conf_base']} ({_r['conf_label']}) "
+            f"| {_r['auto']} "
+            f"| {_r['suitability']} |\n"
+        )
+    st.markdown(_header + _body)
+
+    st.markdown("---")
+
     selected = st.selectbox("Select an extension", LEARN_OPTIONS)
 
-    # Resolve alias labels like ".stp  (→ .step)" back to the raw extension.
+    # Resolve alias labels like ".stp  (→ .step)" back to the raw extension and canonical key.
     ext = selected.split("(")[0].strip() if "(" in selected else selected
+    ext_lower = ext.lower()
+    canonical_ext = EXTENSION_TO_FORMAT.get(ext_lower, ext_lower)
     info = get_format_info(ext)
 
     if info:
-        render_summary_card(info, extension=ext)
+        st.subheader(info["label"])
+        st.caption(f"{ext}  ·  {info['geometry_class']}")
+        render_format_field_guide(info, canonical_ext)
 
 # ---------------------------------------------------------------------------
 # Learn — Materials page
