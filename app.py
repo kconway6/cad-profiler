@@ -1,5 +1,11 @@
-import streamlit as st
+from __future__ import annotations
+
+import io
 import os
+
+import numpy as np
+import streamlit as st
+import trimesh
 
 st.set_page_config(page_title="CAD File Profiler", layout="centered")
 
@@ -235,6 +241,92 @@ def compute_contextual_risk(extension: str, geometry_class: str, workflow: str) 
     return CONTEXT_RISK_MAP.get(workflow, {}).get(geometry_class, "Medium")
 
 
+MESH_EXTENSIONS = {".stl", ".obj"}
+COMPONENT_SPLIT_MAX_TRIANGLES = 1_000_000
+
+
+def parse_mesh_metrics(file_bytes: bytes, file_type: str) -> dict | str:
+    """Load a mesh from raw bytes and return basic geometric metrics.
+
+    Returns a dict of metrics on success, or an error-message string on failure.
+    """
+    try:
+        mesh = trimesh.load(
+            io.BytesIO(file_bytes),
+            file_type=file_type.lstrip("."),
+        )
+        if isinstance(mesh, trimesh.Scene):
+            mesh = mesh.dump(concatenate=True)
+        if not isinstance(mesh, trimesh.Trimesh):
+            return f"Unexpected mesh type after loading: {type(mesh).__name__}"
+
+        if mesh.bounds is None or len(mesh.vertices) == 0:
+            return "Mesh contains no geometry (0 vertices)."
+
+        bb_min = mesh.bounds[0]
+        bb_max = mesh.bounds[1]
+        dims = bb_max - bb_min
+
+        tri_count = int(len(mesh.faces))
+
+        if tri_count <= COMPONENT_SPLIT_MAX_TRIANGLES:
+            body_count: int | None = len(mesh.split(only_watertight=False))
+        else:
+            body_count = None
+
+        return {
+            "triangle_count": tri_count,
+            "bbox_dims": np.round(dims, 4).tolist(),
+            "bbox_min": np.round(bb_min, 4).tolist(),
+            "bbox_max": np.round(bb_max, 4).tolist(),
+            "is_watertight": bool(mesh.is_watertight),
+            "component_count": body_count,
+        }
+    except Exception as exc:
+        return f"Mesh parsing failed: {exc}"
+
+
+def render_mesh_metrics(metrics: dict) -> None:
+    """Display extracted mesh metrics in a dedicated section."""
+    st.markdown("---")
+    st.subheader("Extracted metrics")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Triangle count**")
+        st.write(f"{metrics['triangle_count']:,}")
+
+        st.markdown("**Bounding box dimensions (X, Y, Z)**")
+        dx, dy, dz = metrics["bbox_dims"]
+        st.write(f"{dx}  ×  {dy}  ×  {dz}")
+
+    with col2:
+        st.markdown("**Watertight**")
+        st.write("Yes" if metrics["is_watertight"] else "No")
+
+        st.markdown("**Disconnected components**")
+        if metrics["component_count"] is not None:
+            st.write(str(metrics["component_count"]))
+        else:
+            st.write("(skipped for performance)")
+
+        st.markdown("**Bounding box min**")
+        st.write(
+            f"({metrics['bbox_min'][0]}, {metrics['bbox_min'][1]}, {metrics['bbox_min'][2]})"
+        )
+
+        st.markdown("**Bounding box max**")
+        st.write(
+            f"({metrics['bbox_max'][0]}, {metrics['bbox_max'][1]}, {metrics['bbox_max'][2]})"
+        )
+
+    st.caption(
+        "Mesh formats may not reliably encode units (mm vs in). "
+        "Confirm units before quoting."
+    )
+
+
 def get_format_info(extension: str) -> dict | None:
     """Resolve extension (including aliases) to FORMAT_KB entry."""
     ext = extension.lower()
@@ -306,6 +398,14 @@ if uploaded_file:
             extension, info["geometry_class"], workflow
         )
         render_summary_card(filename, extension, info, contextual_risk)
+
+        if extension in MESH_EXTENSIONS:
+            file_bytes = uploaded_file.getvalue()
+            result = parse_mesh_metrics(file_bytes, extension)
+            if isinstance(result, dict):
+                render_mesh_metrics(result)
+            else:
+                st.warning(result)
     else:
         st.subheader("Unknown format")
         st.caption(f"{filename}  ·  {extension}")
