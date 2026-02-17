@@ -9,6 +9,7 @@ dependencies = [
     "trimesh>=4.6.0",
     "networkx>=3.4",
     "ezdxf>=1.4.0",
+    "numpy>=2.2.0",
 ]
 
 [dependency-groups]

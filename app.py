@@ -195,52 +195,15 @@ WORKFLOW_CONTEXTS = [
     "Sheet Metal / 2D CAM",
 ]
 
-# Maps (workflow_context, geometry_class) → contextual risk level.
-CONTEXT_RISK_MAP = {
-    "Precision Machining": {
-        "B-Rep": "Low",
-        "Surface": "Medium",
-        "Mesh": "High",
-        "Parametric": "Medium",
-        "2D Drawing": "Medium",
-    },
-    "Additive Manufacturing": {
-        "B-Rep": "Medium",
-        "Surface": "Medium",
-        "Mesh": "Low",
-        "Parametric": "Medium",
-        "2D Drawing": "High",
-    },
-    "Sheet Metal / 2D CAM": {
-        "B-Rep": "Medium",
-        "Surface": "Medium",
-        "Mesh": "High",
-        "Parametric": "Medium",
-        "2D Drawing": "Low",
-    },
-}
 
-# Override specific extensions within a workflow when their risk diverges from
-# the geometry_class default (e.g. STL is Low for additive but OBJ is Medium).
-CONTEXT_RISK_EXT_OVERRIDES = {
-    "Additive Manufacturing": {
-        ".stl": "Low",
-        ".obj": "Medium",
-    },
-    "Sheet Metal / 2D CAM": {
-        ".dxf": "Low",
-        ".dwg": "Medium",
-    },
-}
+def compute_contextual_risk(risk_score: int) -> str:
+    """Derive the contextual risk label from the numeric risk score.
 
-
-def compute_contextual_risk(extension: str, geometry_class: str, workflow: str) -> str:
-    """Return a context-adjusted risk level for the given workflow."""
-    ext = EXTENSION_TO_FORMAT.get(extension.lower(), extension.lower())
-    overrides = CONTEXT_RISK_EXT_OVERRIDES.get(workflow, {})
-    if ext in overrides:
-        return overrides[ext]
-    return CONTEXT_RISK_MAP.get(workflow, {}).get(geometry_class, "Medium")
+    Delegates to *score_to_band* (defined below) so that risk labels are
+    always consistent with the dual-axis scoring model.
+    """
+    label, _ = score_to_band(risk_score, "risk")
+    return label
 
 
 MESH_EXTENSIONS = {".stl", ".obj"}
@@ -571,6 +534,156 @@ def build_triage_summary(
     return f"{sentence1} {next_ask}"
 
 
+# ---------------------------------------------------------------------------
+# Dual-axis scoring (0–100)
+# ---------------------------------------------------------------------------
+
+# (workflow, geometry_class) → (risk_baseline, confidence_baseline)
+SCORE_BASELINES: dict[str, dict[str, tuple[int, int]]] = {
+    "Precision Machining": {
+        "B-Rep": (15, 85),
+        "Surface": (40, 55),
+        "Mesh": (75, 25),
+        "Parametric": (20, 80),
+        "2D Drawing": (45, 50),
+    },
+    "Additive Manufacturing": {
+        "B-Rep": (30, 70),
+        "Surface": (40, 55),
+        "Mesh": (15, 80),
+        "Parametric": (35, 65),
+        "2D Drawing": (80, 20),
+    },
+    "Sheet Metal / 2D CAM": {
+        "B-Rep": (30, 65),
+        "Surface": (45, 50),
+        "Mesh": (75, 20),
+        "Parametric": (35, 60),
+        "2D Drawing": (15, 80),
+    },
+}
+
+RISK_BANDS: list[tuple[int, str, str]] = [
+    (20, "Low", "#2ecc71"),
+    (40, "Moderate", "#f1c40f"),
+    (60, "Elevated", "#e67e22"),
+    (80, "High", "#e74c3c"),
+    (100, "Severe", "#c0392b"),
+]
+
+CONFIDENCE_BANDS: list[tuple[int, str, str]] = [
+    (20, "Very low", "#c0392b"),
+    (40, "Low", "#e74c3c"),
+    (60, "Medium", "#e67e22"),
+    (80, "High", "#f1c40f"),
+    (100, "Very high", "#2ecc71"),
+]
+
+
+def score_to_band(score: int, kind: str) -> tuple[str, str]:
+    """Return (descriptor, hex_color) for a 0–100 score."""
+    bands = RISK_BANDS if kind == "risk" else CONFIDENCE_BANDS
+    for ceiling, label, color in bands:
+        if score <= ceiling:
+            return label, color
+    return bands[-1][1], bands[-1][2]
+
+
+def compute_scores(
+    info: dict,
+    workflow: str,
+    mesh_metrics: dict | None = None,
+    dxf_metrics: dict | None = None,
+) -> tuple[int, int, list[str]]:
+    """Return (risk_score, confidence_score, explanations)."""
+    gc = info["geometry_class"]
+    risk, confidence = SCORE_BASELINES.get(workflow, {}).get(gc, (50, 50))
+    explanations: list[str] = [
+        f"Baseline for {gc} in {workflow}: risk {risk}, confidence {confidence}"
+    ]
+
+    if mesh_metrics is not None:
+        if not mesh_metrics.get("is_watertight", True):
+            risk += 10
+            confidence -= 10
+            explanations.append("Non-watertight mesh: risk +10, confidence −10")
+        cc = mesh_metrics.get("component_count")
+        if cc is not None and cc > 1:
+            risk += 8
+            explanations.append(f"{cc} disconnected components: risk +8")
+        tri = mesh_metrics.get("triangle_count", 0)
+        if tri > 2_000_000:
+            risk += 10
+            explanations.append(f"Very high triangle count ({tri:,}): risk +10")
+        elif tri > 500_000:
+            risk += 5
+            explanations.append(f"High triangle count ({tri:,}): risk +5")
+
+    if dxf_metrics is not None:
+        spline_count = dxf_metrics.get("counts_by_type", {}).get("SPLINE", 0)
+        if spline_count > 0:
+            risk += 10
+            confidence -= 5
+            explanations.append(
+                f"Splines present ({spline_count}): risk +10, confidence −5"
+            )
+        extents = dxf_metrics.get("extents")
+        if extents is not None:
+            max_dim = max(extents["size"][0], extents["size"][1])
+            if max_dim > 10_000:
+                risk += 5
+                explanations.append(
+                    f"Very large extents ({max_dim:,.1f}): risk +5 — verify units"
+                )
+            elif 0 < max_dim < 1:
+                risk += 5
+                explanations.append(
+                    f"Very small extents ({max_dim:.4f}): risk +5 — verify units"
+                )
+
+    risk = max(0, min(100, risk))
+    confidence = max(0, min(100, confidence))
+    return risk, confidence, explanations
+
+
+def _colored_bar_html(score: int, color: str) -> str:
+    """Return an HTML progress bar with the given color."""
+    return (
+        f'<div style="background:#e0e0e0;border-radius:6px;height:18px;width:100%">'
+        f'<div style="background:{color};width:{score}%;height:100%;border-radius:6px">'
+        f"</div></div>"
+    )
+
+
+def render_scoring_section(
+    risk_score: int,
+    confidence_score: int,
+    explanations: list[str],
+) -> None:
+    """Display the dual-axis scoring section with colored bars."""
+    st.markdown("---")
+    st.subheader("Scoring")
+
+    risk_label, risk_color = score_to_band(risk_score, "risk")
+    conf_label, conf_color = score_to_band(confidence_score, "confidence")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown(f"**Quote Risk Score:** {risk_score} — {risk_label}")
+        st.markdown(_colored_bar_html(risk_score, risk_color), unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"**Data Confidence Score:** {confidence_score} — {conf_label}")
+        st.markdown(
+            _colored_bar_html(confidence_score, conf_color), unsafe_allow_html=True
+        )
+
+    st.markdown("**Score drivers**")
+    for line in explanations:
+        st.markdown(f"- {line}")
+
+
 # Build the Learn-page dropdown options: canonical extensions + aliases.
 def _build_learn_options() -> list[str]:
     options: list[str] = list(FORMAT_KB.keys())
@@ -604,17 +717,7 @@ if page == "Analyze":
         info = get_format_info(extension)
 
         if info:
-            contextual_risk = compute_contextual_risk(
-                extension, info["geometry_class"], workflow
-            )
-            render_summary_card(
-                info,
-                filename=filename,
-                extension=extension,
-                contextual_risk=contextual_risk,
-            )
-
-            # Parse metrics first (needed by triage) but render after.
+            # -- Compute everything before rendering -------------------------
             mesh_metrics: dict | None = None
             dxf_metrics: dict | None = None
             mesh_error: str | None = None
@@ -635,7 +738,21 @@ if page == "Analyze":
                 else:
                     dxf_error = result
 
-            # Triage summary — immediately below the summary card.
+            risk_score, confidence_score, explanations = compute_scores(
+                info, workflow, mesh_metrics, dxf_metrics
+            )
+            contextual_risk = compute_contextual_risk(risk_score)
+
+            # -- Render: summary card → scoring → triage → metrics ----------
+            render_summary_card(
+                info,
+                filename=filename,
+                extension=extension,
+                contextual_risk=contextual_risk,
+            )
+
+            render_scoring_section(risk_score, confidence_score, explanations)
+
             triage_text = build_triage_summary(
                 info, contextual_risk, mesh_metrics, dxf_metrics
             )
@@ -648,7 +765,6 @@ if page == "Analyze":
                 disabled=True,
             )
 
-            # Extracted metrics — below the triage.
             if mesh_metrics is not None:
                 render_mesh_metrics(mesh_metrics)
             elif mesh_error is not None:
