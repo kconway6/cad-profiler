@@ -7,9 +7,20 @@ import ezdxf
 from ezdxf import bbox as ezdxf_bbox
 import numpy as np
 import streamlit as st
+import streamlit.components.v1 as st_components
 import trimesh
 
 st.set_page_config(page_title="CAD File Profiler", layout="centered")
+
+
+def _scroll_to_top() -> None:
+    """Inject JS to reset scroll position when switching pages."""
+    st_components.html(
+        "<script>window.parent.document.querySelector('section.main')"
+        ".scrollTo(0, 0);</script>",
+        height=0,
+    )
+
 
 # Canonical extension per format (true aliases only, e.g. .stp -> .step)
 EXTENSION_TO_FORMAT = {
@@ -191,6 +202,269 @@ FORMAT_KB = {
         "notes": ["Good for 2D CAM and CNC profile work."],
     },
 }
+
+
+MATERIALS = [
+    "Aluminum — 6061-T6 (default)",
+    "Aluminum — 7075-T6",
+    "Steel — 1018 (low carbon)",
+    "Steel — 4140 (alloy)",
+    "Stainless Steel — 304/316",
+    "Titanium — Ti-6Al-4V",
+    "Inconel — 718",
+    "Other / Unknown",
+]
+
+
+MATERIAL_KB: dict[str, dict] = {
+    "Aluminum — 6061-T6 (default)": {
+        "difficulty": "Low",
+        "machining_reality": (
+            "6061-T6 is the most forgiving CNC material in common use. It"
+            " shears cleanly, produces well-formed chips, and allows"
+            " aggressive feeds and speeds (SFM 800–1200+) with standard"
+            " uncoated or ZrN-coated carbide endmills. Tool life is"
+            ' excellent — a single 1/2" endmill can often run 200+ parts'
+            " before replacement. The material is thermally conductive, so"
+            " heat leaves through the chip rather than building at the"
+            " cutting edge, which means mist coolant or even dry cutting"
+            " is viable for many operations."
+        ),
+        "cost_drivers": [
+            "Very low tool wear — standard 2- or 3-flute carbide endmills last hundreds of parts",
+            "Fast cycle times: feeds of 80–150 IPM and full-slotting depths of 1×D are routine",
+            "Mist or flood coolant both work; no special coolant delivery needed",
+            "Low scrap risk — the material is ductile and forgiving of minor programming errors",
+            "Stock is cheap and widely available in plate, bar, and round",
+        ],
+        "quote_implications": [
+            "Straightforward quoting — cycle time estimates are reliable and tool cost is minimal",
+            "Confirm temper: T6 (general purpose) vs T651 (stress-relieved, better flatness for plates)",
+            "Anodize-ready surfaces need Ra 32–63 µin finish passes; factor in if cosmetic",
+            'Thin-wall features (<0.040") are achievable but may need reduced stepover and spring passes',
+        ],
+    },
+    "Aluminum — 7075-T6": {
+        "difficulty": "Low",
+        "machining_reality": (
+            "7075-T6 is significantly harder and stronger than 6061 (UTS"
+            " ~83 ksi vs ~45 ksi) and machines at similar speeds, but it"
+            " is less forgiving under aggressive cuts. It produces shorter,"
+            " snappier chips and is more prone to residual-stress warping"
+            " in thin-wall or asymmetric parts. Hogging pockets in 7075"
+            " plate can release internal stresses that bow or twist the"
+            " part after unclamping — stress-relief cycles or alternating"
+            " roughing sides may be needed."
+        ),
+        "cost_drivers": [
+            "Tool wear ~20–30% higher than 6061; coated carbide (AlTiN) extends life at high speeds",
+            "Feeds and speeds comparable to 6061 (SFM 600–1000) but with slightly lower DOC limits",
+            "Residual stress is the hidden cost: thin-wall parts may need intermediate stress relief or flip roughing",
+            "Stock cost ~1.5–2× 6061; scrapping a large 7075 billet is a real financial hit",
+            "Chip evacuation is easier than 6061 (shorter chips) but chip-to-surface contact can gall soft tooling",
+        ],
+        "quote_implications": [
+            "Confirm temper and whether plate is pre-stretched (T7351) to reduce residual stress",
+            "Grain direction matters for aerospace — ask if orientation relative to rolling direction is specified",
+            "Material certs (mill certs) are typically required; AMS 4078 / AMS 4045 callouts are common",
+            "Ask about stress-relief strategy for thin-wall geometry — this can add ops and cycle time",
+        ],
+    },
+    "Steel — 1018 (low carbon)": {
+        "difficulty": "Medium",
+        "machining_reality": (
+            "1018 is soft (~Brinell 126, ~72 HRB) and ductile, which makes"
+            " it gummy rather than brittle. It produces long, stringy chips"
+            " that wrap around tooling and clog flutes if chip-breaking"
+            " geometry isn't used. Built-up edge (BUE) is common at low"
+            " cutting speeds — the material welds itself to the tool tip"
+            " and tears rather than shearing. Running faster (SFM 400–600)"
+            " with coated inserts and positive rake geometry reduces BUE"
+            " and improves finish. Compared to 4140, chip control is worse"
+            " and surface finish is harder to achieve, but tool wear is"
+            " lower and the material is very forgiving structurally."
+        ),
+        "cost_drivers": [
+            "Tool wear is moderate; BUE is the bigger threat — destroys finish before it destroys the tool",
+            "Cycle times ~2–3× aluminum: typical SFM 400–600 with carbide, lower with HSS",
+            "Flood coolant strongly recommended for chip evacuation and BUE prevention",
+            "Stringy chips can bird-nest on the tool or workpiece, causing surface damage and stoppages",
+            "Stock is cheap and widely available; scrap cost is low per unit weight",
+        ],
+        "quote_implications": [
+            "Ask if carburizing or case hardening is planned after machining — tolerances shift after heat treat",
+            "Surface finish expectations: 1018 doesn't take a good polish; Ra 63 µin is realistic, 32 µin is a fight",
+            "Confirm whether customer needs cold-rolled (1018 CF) vs hot-rolled — hardness and surface differ",
+            "Post-machining heat treat (normalize, carburize, Q&T) must be specified up front",
+        ],
+    },
+    "Steel — 4140 (alloy)": {
+        "difficulty": "Medium",
+        "machining_reality": (
+            "4140 is a step up from 1018 in every machining dimension."
+            " Pre-hard (28–32 HRC) it cuts cleanly with coated carbide,"
+            " breaks chips well, and produces a better surface finish than"
+            " low-carbon steel — the chromium–molybdenum alloy content"
+            " actually improves machinability over plain carbon grades."
+            " However, it generates more heat, wears tools faster, and the"
+            " cost jump to hardened 4140 (>40 HRC) is dramatic: tool life"
+            " drops by 50–70%, speeds must be halved, and ceramic or CBN"
+            " inserts may be needed."
+        ),
+        "cost_drivers": [
+            "Tool wear 1.5–2× that of 1018; coated carbide (TiAlN, AlCrN) is required, not optional",
+            "Cycle times ~3–4× aluminum in pre-hard condition; ~5–6× in hardened (>40 HRC) condition",
+            "Flood coolant is essential; through-spindle preferred for deep pockets and holes",
+            "Pre-hard vs annealed vs hardened condition fundamentally changes the quoting equation",
+            "Stock cost ~2× low-carbon steel; scrap is painful on large billets",
+        ],
+        "quote_implications": [
+            "Confirm exact hardness condition: annealed (~197 HB), pre-hard (28–32 HRC), or hardened (40+ HRC)",
+            "If hardened after machining, tolerances will shift — budget for finish grind on critical dims",
+            "Ask about Q&T (quench and temper) requirements — ASTM A829 and AMS 6382 are common callouts",
+            "Material certs are expected for structural, hydraulic, and oil/gas applications",
+        ],
+    },
+    "Stainless Steel — 304/316": {
+        "difficulty": "High",
+        "machining_reality": (
+            "Austenitic stainless (304, 316) work-hardens aggressively:"
+            " every pass that rubs instead of shearing creates a thin,"
+            " glass-hard surface layer that dulls the next pass's cutting"
+            " edge. This means dull tools, light feeds, dwelling, and"
+            " re-cutting spring passes all make the problem worse. The fix"
+            " is sharp tools, rigid setups, aggressive chip loads (stay"
+            " above minimum chip thickness), and never letting the tool"
+            " rub. Tool life is roughly 1/3 to 1/4 of carbon steel at"
+            " equivalent feeds, and cycle times are 2–3× longer."
+        ),
+        "cost_drivers": [
+            "High tool wear from work hardening: expect tool life 1/3 to 1/4 of carbon steel",
+            "Cycle times 2–3× carbon steel — SFM 250–400 typical; slower still with interrupted cuts",
+            "Flood coolant is mandatory: the material's low thermal conductivity traps heat at the cut",
+            "Rigid workholding is critical — chatter causes rubbing, which triggers the work-hardening spiral",
+            "Scrap risk is elevated: a work-hardened surface layer can render a part unsalvageable",
+        ],
+        "quote_implications": [
+            "Confirm exact alloy: 304 (general) vs 316 (marine/chemical — slightly harder to machine)",
+            "Surface finish matters more here — work-hardened surfaces tear; Ra callouts must be explicit",
+            "Passivation (citric or nitric acid) is often required post-machining; electropolish adds more cost",
+            "Lead times run longer: slower cycle times and more frequent tool changes reduce daily throughput",
+        ],
+    },
+    "Titanium — Ti-6Al-4V": {
+        "difficulty": "Very High",
+        "machining_reality": (
+            "Ti-6Al-4V combines high strength (UTS ~130 ksi), very low"
+            " thermal conductivity (~1/6 of steel), and significant"
+            " springback. Because heat doesn't leave through the chip, it"
+            " concentrates at the tool tip — cutting-edge temperatures can"
+            " exceed 600 °C even at modest speeds, causing rapid crater"
+            " wear and edge breakdown. Springback means the material"
+            " deflects under the tool and then recovers, causing"
+            " under-cutting on thin walls and poor dimensional control."
+            " Expect cycle times 3–5× aluminum and tool life 1/5 to 1/10"
+            " of what you'd see in 6061."
+        ),
+        "cost_drivers": [
+            "Extreme tool wear driven by heat: tool life 1/5 to 1/10 of aluminum; premium coated carbide (AlTiN, nanocomposite) or PCD required",
+            "Very slow cycle times — SFM 100–200 typical; 3–5× aluminum for equivalent geometry",
+            "High-pressure through-spindle coolant (1000+ PSI) strongly recommended to manage cutting-edge heat",
+            "Springback causes dimensional drift on thin walls; multiple light finish passes or spring passes needed",
+            "Stock cost is very high ($15–40/lb for bar); a single scrapped billet can cost hundreds of dollars",
+        ],
+        "quote_implications": [
+            "Confirm grade (Grade 5 is Ti-6Al-4V) and condition: annealed, STA (solution treated and aged), or ELI (extra low interstitials for medical)",
+            "Material certs and full batch traceability are almost always required (AMS 4928, AMS 4911)",
+            "Ask about post-machining: chemical milling, shot peening, anodize, or PVD coatings are common in aerospace",
+            "Budget for significantly longer lead times and higher per-part cost — plan for 4–8× the cost of equivalent 6061 parts",
+        ],
+    },
+    "Inconel — 718": {
+        "difficulty": "Very High",
+        "machining_reality": (
+            "Inconel 718 is among the most punishing CNC materials."
+            " It work-hardens like stainless but worse, has even lower"
+            " thermal conductivity than titanium, and is highly abrasive"
+            " due to hard carbide particles in the microstructure. Cutting"
+            " temperatures routinely exceed 700 °C. Ceramic inserts can"
+            " rough at higher speeds (SFM 600–1000) but are brittle and"
+            " demand rigid, chatter-free setups. Carbide finishing at SFM"
+            " 70–120 is common. Tool life in Inconel is often measured in"
+            " minutes, not parts — a single roughing insert may last"
+            " 5–15 minutes of cut time."
+        ),
+        "cost_drivers": [
+            "Extreme tool wear: roughing inserts may last only 5–15 minutes of cutting time; ceramics needed for productivity",
+            "Very slow cycle times with carbide (SFM 70–120); ceramics are faster but require perfect rigidity and zero chatter",
+            "High-pressure coolant (1000+ PSI through spindle) is mandatory — inadequate coolant destroys tools in seconds",
+            "Cutting forces are very high; specialized high-clamp-force workholding and rigid, high-torque spindles are required",
+            "Stock cost is extreme ($30–80/lb); scrap is catastrophically expensive on large forgings or billets",
+        ],
+        "quote_implications": [
+            "Confirm alloy condition: solution annealed (~30 HRC), age-hardened (~40–44 HRC), or direct-aged — machining difficulty varies enormously",
+            "Material certs with full heat-lot traceability are mandatory (AMS 5662, AMS 5663)",
+            "Verify the shop has Inconel experience, ceramic tooling, and high-pressure coolant capability before committing",
+            "Expect cost and lead time 6–10× equivalent steel parts; fewer shops are qualified and capacity is limited",
+        ],
+    },
+    "Other / Unknown": {
+        "difficulty": "Unknown",
+        "machining_reality": (
+            "Material is not specified. Without knowing the alloy, hardness,"
+            " and thermal properties, it is impossible to estimate tool wear"
+            " rates, cycle times, or coolant requirements. A quote without"
+            " a confirmed material is a guess — the difference between"
+            " machining 6061 aluminum and Inconel 718 is easily a 10×"
+            " cost multiplier on the same geometry."
+        ),
+        "cost_drivers": [
+            "Tool wear is unpredictable: a 10× range between easy aluminum and superalloys",
+            "Cycle time cannot be estimated — feeds, speeds, and depth of cut depend entirely on material",
+            "Coolant strategy (mist, flood, high-pressure TSC) depends on material thermal properties",
+            "Workholding forces and rigidity requirements scale with material hardness and cutting forces",
+            "Scrap risk is unquantifiable: material cost per pound ranges from $2 (aluminum) to $80 (Inconel)",
+        ],
+        "quote_implications": [
+            "Request exact material specification (alloy, grade, temper/condition) before quoting",
+            "Confirm hardness or heat treat state — this matters more than alloy name alone for machinability",
+            "Ask about any coatings, plating, or special post-machining processes",
+            "Without material, any quoted price is a placeholder — flag this to the customer explicitly",
+        ],
+    },
+}
+
+
+def render_material_section(material: str) -> None:
+    """Display the material machining reality callout."""
+    mat_info = MATERIAL_KB.get(material)
+    if mat_info is None:
+        return
+
+    st.markdown("---")
+    st.subheader("Material machining reality")
+
+    st.markdown(f"**Difficulty:** {mat_info['difficulty']}")
+    st.write(mat_info["machining_reality"])
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Cost drivers**")
+        for item in mat_info["cost_drivers"]:
+            st.markdown(f"- {item}")
+
+    with col2:
+        st.markdown("**Quote implications**")
+        for item in mat_info["quote_implications"]:
+            st.markdown(f"- {item}")
+
+
+def _material_triage_label(material: str) -> str:
+    """Return a clean material label for triage text (strip parenthetical notes)."""
+    if " (" in material:
+        return material.split(" (")[0].strip()
+    return material
 
 
 def compute_contextual_risk(risk_score: int) -> str:
@@ -423,16 +697,19 @@ def render_summary_card(
     *,
     filename: str | None = None,
     extension: str | None = None,
+    material: str | None = None,
     contextual_risk: str | None = None,
 ) -> None:
     """Render a summary card with header, two columns, and bullet lists.
 
     When *filename* / *extension* are provided (Analyze page) the caption
-    shows them.  When *contextual_risk* is provided the adjusted-risk row
-    is included.
+    shows them.  When *material* is provided it is appended to the caption.
+    When *contextual_risk* is provided the adjusted-risk row is included.
     """
     st.subheader(info["label"])
-    if filename and extension:
+    if filename and extension and material:
+        st.caption(f"{filename}  ·  {extension}  ·  {material}")
+    elif filename and extension:
         st.caption(f"{filename}  ·  {extension}")
     elif extension:
         st.caption(extension)
@@ -481,18 +758,25 @@ def render_summary_card(
 def build_triage_summary(
     info: dict,
     contextual_risk: str,
+    material: str,
     mesh_metrics: dict | None = None,
     dxf_metrics: dict | None = None,
 ) -> str:
     """Return a max-2-sentence triage paragraph for Analyze mode."""
     gc = info["geometry_class"]
     baseline = info["quote_risk_baseline"]
+    mat_label = _material_triage_label(material)
+    unknown_material = material == "Other / Unknown"
 
-    # -- Sentence 1: risk assessment + any cleanup flags ---------------
+    # -- Sentence 1: material + risk assessment + cleanup flags --------
     if contextual_risk == baseline:
-        risk_part = f"{gc} geometry with {baseline.lower()} quote risk"
+        risk_part = (
+            f"Material: {mat_label} — "
+            f"{gc} geometry with {baseline.lower()} quote risk"
+        )
     else:
         risk_part = (
+            f"Material: {mat_label} — "
             f"{gc} geometry with {baseline.lower()} baseline risk, "
             f"adjusted to {contextual_risk.lower()} for CNC machining intake"
         )
@@ -515,18 +799,40 @@ def build_triage_summary(
         sentence1 = f"{risk_part} — {'; '.join(issues)}."
 
     # -- Sentence 2: next ask ------------------------------------------
+    unknown_clause = (
+        "material, heat treat condition, and any coatings/special processes"
+    )
+
     if gc == "Mesh":
-        next_ask = (
-            "Confirm units (mm vs in) and request a STEP or native CAD file "
-            "if available."
-        )
+        if unknown_material:
+            next_ask = (
+                "Confirm units (mm vs in) and request a STEP or native CAD "
+                f"file if available; also confirm {unknown_clause}."
+            )
+        else:
+            next_ask = (
+                "Confirm units (mm vs in) and request a STEP or native CAD "
+                "file if available."
+            )
     elif gc == "2D Drawing":
-        next_ask = (
-            "Confirm dimensions, tolerances, and material thickness are "
-            "specified in the drawing."
-        )
+        if unknown_material:
+            next_ask = (
+                "Confirm dimensions, tolerances, and material thickness are "
+                f"specified in the drawing; also confirm {unknown_clause}."
+            )
+        else:
+            next_ask = (
+                "Confirm dimensions, tolerances, and material thickness are "
+                "specified in the drawing."
+            )
     else:
-        next_ask = "Confirm tolerances and surface finish requirements."
+        if unknown_material:
+            next_ask = (
+                f"Confirm tolerances, surface finish requirements, "
+                f"{unknown_clause}."
+            )
+        else:
+            next_ask = "Confirm tolerances and surface finish requirements."
 
     return f"{sentence1} {next_ask}"
 
@@ -678,16 +984,19 @@ LEARN_OPTIONS = _build_learn_options()
 # Sidebar navigation
 # ---------------------------------------------------------------------------
 st.sidebar.title("CAD File Profiler")
-page = st.sidebar.radio("Navigate", ["Analyze", "Learn"])
+page = st.sidebar.radio("Navigate", ["Analyze", "Learn — Formats", "Learn — Materials"])
 
 # ---------------------------------------------------------------------------
 # Analyze page
 # ---------------------------------------------------------------------------
 if page == "Analyze":
+    _scroll_to_top()
     st.title("CNC Machining Intake")
     st.write(
         "Upload a CAD file to assess format quality and quote risk for CNC machining."
     )
+
+    material = st.selectbox("Material", MATERIALS)
 
     uploaded_file = st.file_uploader("Upload CAD file")
 
@@ -728,13 +1037,16 @@ if page == "Analyze":
                 info,
                 filename=filename,
                 extension=extension,
+                material=material,
                 contextual_risk=contextual_risk,
             )
+
+            render_material_section(material)
 
             render_scoring_section(risk_score, confidence_score, explanations)
 
             triage_text = build_triage_summary(
-                info, contextual_risk, mesh_metrics, dxf_metrics
+                info, contextual_risk, material, mesh_metrics, dxf_metrics
             )
             st.markdown("---")
             st.markdown(f"**Triage summary:** {triage_text}")
@@ -760,9 +1072,10 @@ if page == "Analyze":
             st.info("No format profile in knowledge base for this extension.")
 
 # ---------------------------------------------------------------------------
-# Learn page
+# Learn — Formats page
 # ---------------------------------------------------------------------------
-elif page == "Learn":
+elif page == "Learn — Formats":
+    _scroll_to_top()
     st.title("Format knowledge base")
     st.write("Browse supported CAD format profiles for CNC machining intake.")
 
@@ -774,3 +1087,183 @@ elif page == "Learn":
 
     if info:
         render_summary_card(info, extension=ext)
+
+# ---------------------------------------------------------------------------
+# Learn — Materials page
+# ---------------------------------------------------------------------------
+elif page == "Learn — Materials":
+    _scroll_to_top()
+    st.title("CNC Machining Materials")
+    st.write(
+        "How material choice drives cost, cycle time, and quoting risk in "
+        "CNC machining."
+    )
+
+    # ------------------------------------------------------------------
+    # A. How materials change cost and margin
+    # ------------------------------------------------------------------
+    st.header("How materials change cost and margin")
+
+    st.markdown(
+        "In CNC machining, **machine time is the dominant cost driver**. "
+        "Material choice directly controls how fast you can cut, how long "
+        "your tools last, and how much overhead goes into each part. "
+        "Understanding these dynamics is essential for accurate quoting."
+    )
+
+    st.markdown("#### Machine time")
+    st.markdown(
+        "Harder and tougher materials require slower feeds and speeds, "
+        "directly increasing cycle time. A part that runs in 10 minutes "
+        "in 6061 aluminum may take 30–50 minutes in titanium or Inconel."
+    )
+
+    st.markdown("#### Tool wear and tool changes")
+    st.markdown(
+        "Every material wears tooling differently. Aluminum is gentle on "
+        "cutters; stainless and nickel alloys destroy them. Tool changes "
+        "add cycle time and insert/endmill cost to every part."
+    )
+    st.markdown(
+        "- Aluminum: standard carbide endmills, long tool life\n"
+        "- Carbon steel: coated carbide, moderate life\n"
+        "- Stainless steel: premium coated carbide, frequent changes\n"
+        "- Titanium / Inconel: specialty inserts (ceramic, CBN), "
+        "aggressive replacement schedules"
+    )
+
+    st.markdown("#### Heat management and coolant")
+    st.markdown(
+        "Cutting generates heat. Materials with low thermal conductivity "
+        "(titanium, Inconel) concentrate heat at the tool tip, "
+        "accelerating wear. Effective coolant delivery — especially "
+        "high-pressure through-spindle coolant — becomes mandatory for "
+        "these materials, adding machine capability requirements and cost."
+    )
+
+    st.markdown("#### Work hardening")
+    st.markdown(
+        "Austenitic stainless steels (304, 316) and some nickel alloys "
+        "work-harden rapidly. If the tool rubs instead of cutting — due "
+        "to dull edges, light feeds, or poor rigidity — the surface "
+        "hardens and becomes even more difficult to machine. This creates "
+        "a vicious cycle of accelerating tool wear and degrading surface "
+        "finish."
+    )
+
+    st.markdown("#### Scrap risk and rework sensitivity")
+    st.markdown(
+        "Expensive stock (titanium, Inconel, 7075) makes scrap costly. "
+        "Difficult-to-machine materials also leave less margin for rework "
+        "— a scrapped titanium billet can represent hundreds of dollars in "
+        "material alone, before any machine time is accounted for."
+    )
+
+    st.markdown("#### Inspection overhead")
+    st.markdown(
+        "Tighter tolerances in harder materials mean more in-process "
+        "checks, CMM time, and potential first-article inspection (FAI) "
+        "requirements. Aerospace and medical materials (Ti-6Al-4V, "
+        "Inconel 718) almost always carry traceability and certification "
+        "requirements that add administrative cost."
+    )
+
+    # ------------------------------------------------------------------
+    # B. Material quick reference
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.header("Material quick reference")
+
+    learn_material = st.selectbox("Material", MATERIALS, key="learn_material")
+
+    mat_info = MATERIAL_KB.get(learn_material)
+    if mat_info:
+        st.markdown(f"**Difficulty:** {mat_info['difficulty']}")
+        st.write(mat_info["machining_reality"])
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Cost drivers**")
+            for item in mat_info["cost_drivers"]:
+                st.markdown(f"- {item}")
+        with col2:
+            st.markdown("**Quote implications**")
+            for item in mat_info["quote_implications"]:
+                st.markdown(f"- {item}")
+
+    # ------------------------------------------------------------------
+    # C. Rule-of-thumb takeaways
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.header("Rule-of-thumb takeaways")
+
+    _takeaways = [
+        "6061 aluminum is the safest default — it's forgiving, fast to cut, and cheap to quote.",
+        "7075 is stronger than 6061 but less tolerant of thin walls and residual stress.",
+        "Low-carbon steel (1018) is gummy — keep feeds aggressive to avoid work hardening and built-up edge.",
+        "4140 pre-hard (28–32 HRC) is manageable; above 40 HRC, expect a significant cost jump.",
+        "Stainless work-hardens — keep tools sharp, feeds engaged, and never let the cutter rub.",
+        "Titanium and Inconel punish tooling and reward conservative speeds with aggressive depth of cut.",
+        "Harder materials amplify every setup weakness: rigidity, workholding, and runout all matter more.",
+        "Through-spindle coolant is a nice-to-have for steel, but mandatory for titanium and Inconel.",
+        "Material cost matters twice: once for the stock, and again if you scrap it.",
+        "Always ask for material condition (temper, hardness, heat treat state) — it changes the quote more than alloy alone.",
+        "If the customer says 'stainless' without specifying a grade, assume 304 and ask — 17-4 PH and 316 are very different jobs.",
+        "When tolerances are tight on hard materials, plan for a finish pass and budget CMM time.",
+    ]
+
+    for item in _takeaways:
+        st.markdown(f"- {item}")
+
+    # ------------------------------------------------------------------
+    # D. What to ask customers
+    # ------------------------------------------------------------------
+    st.markdown("---")
+    st.header("What to ask customers")
+
+    st.markdown("#### Material spec & condition")
+    st.markdown(
+        "- Exact alloy and grade (e.g., 6061-T6, 304L, Ti-6Al-4V)\n"
+        "- Temper or hardness condition (annealed, pre-hard, aged)\n"
+        "- Applicable material standard (AMS, ASTM, DIN, JIS)\n"
+        "- Material certification or mill cert requirements"
+    )
+
+    st.markdown("#### Stock form")
+    st.markdown(
+        "- Plate, bar, round, tube, forging, or billet\n"
+        "- Near-net-shape or oversized stock\n"
+        "- Customer-furnished material (CFM) or shop-procured"
+    )
+
+    st.markdown("#### Quantity & lead time")
+    st.markdown(
+        "- Prototype vs production quantity\n"
+        "- Required delivery date or lead time window\n"
+        "- Blanket order or one-time run\n"
+        "- Any material lead time concerns (long-lead alloys)"
+    )
+
+    st.markdown("#### Critical tolerances / datums / GD&T")
+    st.markdown(
+        "- Tightest dimensional tolerance on the part\n"
+        "- Key datums and datum reference frames\n"
+        "- Any GD&T callouts (true position, profile, runout)\n"
+        "- Whether tolerances are pre- or post-heat-treat"
+    )
+
+    st.markdown("#### Surface finish, coatings, heat treat, special processes")
+    st.markdown(
+        "- Surface finish requirements (Ra / Rz callouts)\n"
+        "- Coatings (anodize, plating, PVD, paint)\n"
+        "- Heat treat (quench & temper, age hardening, stress relief)\n"
+        "- Special processes (passivation, shot peening, NDT)"
+    )
+
+    st.markdown("#### Inspection requirements")
+    st.markdown(
+        "- First Article Inspection (FAI) per AS9102 or equivalent\n"
+        "- CMM dimensional report\n"
+        "- Material certs and traceability\n"
+        "- Any customer-specific quality clauses or QMS requirements"
+    )
