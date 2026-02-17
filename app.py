@@ -39,7 +39,11 @@ FORMAT_KB = {
         "dfm_quote_confidence": "Medium",
         "quote_risk_baseline": "Medium",
         "automation_friendliness": "Medium",
-        "notes": ["Older standard; STEP preferred when possible."],
+        "notes": [
+            "Older standard; STEP preferred when possible.",
+            "Solids are possible but surface-only exports are common.",
+            "Geometry healing may be required before machining.",
+        ],
     },
     ".stl": {
         "label": "Mesh (STL)",
@@ -51,12 +55,13 @@ FORMAT_KB = {
         "common_use_cases": ["3D printing", "Scan data", "Quick exports"],
         "survives": ["Triangulated surface", "Envelope shape"],
         "lost": ["Exact geometry", "Edges/faces", "Units sometimes ambiguous"],
-        "dfm_quote_confidence": "Medium",
-        "quote_risk_baseline": "Medium",
+        "dfm_quote_confidence": "Low",
+        "quote_risk_baseline": "High",
         "automation_friendliness": "Medium",
         "notes": [
             "Check units (mm vs in).",
             "Not suitable for precision machining quote alone.",
+            "Lacks exact B-rep geometry; reverse engineering may be needed.",
         ],
     },
     ".obj": {
@@ -84,11 +89,11 @@ FORMAT_KB = {
         "survives": ["Full feature tree", "Parameters", "Materials"],
         "lost": ["Nothing when opened in SolidWorks"],
         "dfm_quote_confidence": "High",
-        "quote_risk_baseline": "Low",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "High",
         "notes": [
-            "Requires SolidWorks to open.",
-            "Export STEP for neutral workflow.",
+            "Risk depends on access to SolidWorks; file cannot be opened without it.",
+            "Export to STEP is recommended for neutral workflows.",
         ],
     },
     ".sldasm": {
@@ -99,9 +104,12 @@ FORMAT_KB = {
         "survives": ["Structure", "mates", "parts"],
         "lost": ["Nothing when opened in SolidWorks"],
         "dfm_quote_confidence": "High",
-        "quote_risk_baseline": "Low",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "High",
-        "notes": ["Assembly context preserved.", "Export STEP for neutral."],
+        "notes": [
+            "Risk depends on access to SolidWorks; file cannot be opened without it.",
+            "Export to STEP is recommended for neutral workflows.",
+        ],
     },
     ".prt": {
         "label": "NX / Creo Native",
@@ -130,9 +138,12 @@ FORMAT_KB = {
         "survives": ["Full part in CATIA"],
         "lost": ["Cross-platform"],
         "dfm_quote_confidence": "High",
-        "quote_risk_baseline": "Low",
+        "quote_risk_baseline": "Medium",
         "automation_friendliness": "Medium",
-        "notes": ["Native CATIA format.", "STEP for exchange."],
+        "notes": [
+            "Risk depends on access to CATIA; file cannot be opened without it.",
+            "Export to STEP is recommended for neutral workflows.",
+        ],
     },
     ".dwg": {
         "label": "AutoCAD Native (2D/3D)",
@@ -170,6 +181,60 @@ FORMAT_KB = {
 }
 
 
+WORKFLOW_CONTEXTS = [
+    "Precision Machining",
+    "Additive Manufacturing",
+    "Sheet Metal / 2D CAM",
+]
+
+# Maps (workflow_context, geometry_class) → contextual risk level.
+CONTEXT_RISK_MAP = {
+    "Precision Machining": {
+        "B-Rep": "Low",
+        "Surface": "Medium",
+        "Mesh": "High",
+        "Parametric": "Medium",
+        "2D Drawing": "Medium",
+    },
+    "Additive Manufacturing": {
+        "B-Rep": "Medium",
+        "Surface": "Medium",
+        "Mesh": "Low",
+        "Parametric": "Medium",
+        "2D Drawing": "High",
+    },
+    "Sheet Metal / 2D CAM": {
+        "B-Rep": "Medium",
+        "Surface": "Medium",
+        "Mesh": "High",
+        "Parametric": "Medium",
+        "2D Drawing": "Low",
+    },
+}
+
+# Override specific extensions within a workflow when their risk diverges from
+# the geometry_class default (e.g. STL is Low for additive but OBJ is Medium).
+CONTEXT_RISK_EXT_OVERRIDES = {
+    "Additive Manufacturing": {
+        ".stl": "Low",
+        ".obj": "Medium",
+    },
+    "Sheet Metal / 2D CAM": {
+        ".dxf": "Low",
+        ".dwg": "Medium",
+    },
+}
+
+
+def compute_contextual_risk(extension: str, geometry_class: str, workflow: str) -> str:
+    """Return a context-adjusted risk level for the given workflow."""
+    ext = EXTENSION_TO_FORMAT.get(extension.lower(), extension.lower())
+    overrides = CONTEXT_RISK_EXT_OVERRIDES.get(workflow, {})
+    if ext in overrides:
+        return overrides[ext]
+    return CONTEXT_RISK_MAP.get(workflow, {}).get(geometry_class, "Medium")
+
+
 def get_format_info(extension: str) -> dict | None:
     """Resolve extension (including aliases) to FORMAT_KB entry."""
     ext = extension.lower()
@@ -177,7 +242,9 @@ def get_format_info(extension: str) -> dict | None:
     return FORMAT_KB.get(canonical)
 
 
-def render_summary_card(filename: str, extension: str, info: dict) -> None:
+def render_summary_card(
+    filename: str, extension: str, info: dict, contextual_risk: str
+) -> None:
     """Render a summary card with header, two columns, and bullet lists."""
     st.subheader(info["label"])
     st.caption(f"{filename}  ·  {extension}")
@@ -211,6 +278,9 @@ def render_summary_card(filename: str, extension: str, info: dict) -> None:
         st.markdown("**Quote risk baseline**")
         st.write(info["quote_risk_baseline"])
 
+        st.markdown("**Quote risk (context-adjusted)**")
+        st.write(contextual_risk)
+
         st.markdown("**Automation friendliness**")
         st.write(info["automation_friendliness"])
 
@@ -222,6 +292,8 @@ def render_summary_card(filename: str, extension: str, info: dict) -> None:
 st.title("CAD File Profiler")
 st.write("Upload a CAD file to analyze its format and metadata.")
 
+workflow = st.selectbox("Workflow Context", WORKFLOW_CONTEXTS)
+
 uploaded_file = st.file_uploader("Upload CAD file")
 
 if uploaded_file:
@@ -230,7 +302,10 @@ if uploaded_file:
     info = get_format_info(extension)
 
     if info:
-        render_summary_card(filename, extension, info)
+        contextual_risk = compute_contextual_risk(
+            extension, info["geometry_class"], workflow
+        )
+        render_summary_card(filename, extension, info, contextual_risk)
     else:
         st.subheader("Unknown format")
         st.caption(f"{filename}  ·  {extension}")
